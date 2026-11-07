@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>net.nulli0n</groupId>
     <artifactId>excellentcrates-v6-converter</artifactId>
-    <version>1.0.14</version>
+    <version>1.0.15</version>
     <name>ExcellentCrates v6 to v7 Converter</name>
 
     <properties>
