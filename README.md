@@ -1,4 +1,4 @@
-# ExcellentCrates V6 Converter
+# ExcellentCrates V6 Converter (1.0.15)
 
 Converts ExcellentCrates 6.6.1 data to the ExcellentCrates 7.2.0 format.
 
@@ -10,6 +10,8 @@ Converts ExcellentCrates 6.6.1 data to the ExcellentCrates 7.2.0 format.
 
 Permission: `excellentcratesv6converter.convert` (operators by default).
 
+Item rewards use their first converted reward item as the preview icon. Command rewards use a command block when no custom preview icon is configured. Failed preview-item conversions use a barrier and are listed as failures.
+
 ## Console output
 
 ```text
@@ -20,3 +22,4 @@ Permission: `excellentcratesv6converter.convert` (operators by default).
 ```
 
 Full details are appended to `plugins/ExcellentCrates/conversion-report.txt`.
+
