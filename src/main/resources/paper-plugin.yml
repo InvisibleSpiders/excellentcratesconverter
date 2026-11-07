@@ -1,0 +1,11 @@
+name: ExcellentCratesV6Converter
+main: net.nulli0n.ecmigrator.ExcellentCratesV6Converter
+version: '1.0.14'
+description: Converts ExcellentCrates 6.6.1 data to the ExcellentCrates 7.2.0 file format.
+api-version: '1.21'
+dependencies:
+  server:
+    ExcellentCrates:
+      load: AFTER
+      required: false
+
