@@ -819,8 +819,7 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
     }
 
     private void forceSanitizeReward(YamlConfiguration reward, String crateId, String rewardId) {
-        if (reward.getBoolean("Rarity.enabled", false) || reward.contains("preview.icon")
-            || reward.getBoolean("preview.use_item_data", false) || reward.contains("limit") || reward.contains("cooldown")) {
+        if (reward.getBoolean("Rarity.enabled", false) || reward.contains("limit") || reward.contains("cooldown")) {
             this.manualFeaturesDisabled++;
         }
         double weight = reward.getDouble("base.weight", 10.0D);
@@ -832,8 +831,6 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
         reward.set("Rarity.rarity_id", null);
         reward.set("preview.name", nonBlank(reward.getString("preview.name"), rewardId));
         reward.set("preview.lore", rewriteLegacyPlaceholders(reward.getStringList("preview.lore")));
-        reward.set("preview.icon", null);
-        reward.set("preview.use_item_data", false);
         reward.set("limit", null);
         reward.set("cooldown", null);
         reward.set("broadcast.enabled", reward.getBoolean("broadcast.enabled", false));
@@ -854,7 +851,7 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
         if (rawItems != null && itemEntries == null) {
             reward.set("items.item_list", Map.of());
             this.manualSafeDefaultsApplied++;
-            this.warnings.add("Reward '" + crateId + "/" + rewardId + "' had a malformed item list; it was cleared in force mode.");
+            this.failures.add("Reward '" + crateId + "/" + rewardId + "' had a malformed item list; it was cleared in force mode.");
         }
         else if (itemEntries != null) {
             for (Map.Entry<?, ?> entry : itemEntries.entrySet()) {
@@ -862,9 +859,31 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
                 if (!isSafeAdaptedItem(entry.getValue())) {
                     reward.set("items.item_list." + itemId, null);
                     this.manualSafeDefaultsApplied++;
-                    this.warnings.add("Reward '" + crateId + "/" + rewardId + "' contained an invalid item entry '"
-                        + itemId + "'; that entry was removed in force mode.");
+                    this.failures.add("Reward '" + crateId + "/" + rewardId + "' item '" + itemId
+                        + "' could not be converted; the invalid entry was removed in force mode.");
                 }
+            }
+        }
+
+        boolean commandReward = reward.getBoolean("commands.enabled", false)
+            || reward.getConfigurationSection("commands") != null;
+        if (commandReward) {
+            if (!isSafeAdaptedItem(reward.get("preview.icon"))) {
+                reward.set("preview.icon", fallbackPreviewIcon("command_block", "command reward preview " + crateId + "/" + rewardId));
+            }
+            reward.set("preview.use_icon_data", false);
+        }
+        else {
+            Map<String, Object> firstItem = firstSafeAdaptedItem(reward.get("items.item_list"));
+            if (firstItem != null) {
+                reward.set("preview.icon", firstItem);
+                reward.set("preview.use_icon_data", true);
+            }
+            else {
+                reward.set("preview.icon", fallbackPreviewIcon("barrier", "failed item reward preview " + crateId + "/" + rewardId));
+                reward.set("preview.use_icon_data", false);
+                this.failures.add("Reward '" + crateId + "/" + rewardId
+                    + "' has no successfully converted given item; its preview icon was set to a barrier.");
             }
         }
     }
@@ -875,17 +894,35 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
         reward.set("Rarity.enabled", false);
         reward.set("preview.name", rewardId);
         reward.set("preview.lore", List.of("Legacy reward settings need to be reviewed."));
-        reward.set("preview.use_item_data", false);
+        reward.set("preview.use_icon_data", false);
         reward.set("broadcast.enabled", false);
         if ("COMMAND".equalsIgnoreCase(type)) {
+            reward.set("preview.icon", fallbackPreviewIcon("command_block", "safe command reward preview " + rewardId));
             reward.set("commands.enabled", false);
             reward.set("commands.iterations", 1);
             reward.set("commands.give_mode", "NORMAL");
         }
         else {
+            reward.set("preview.icon", fallbackPreviewIcon("barrier", "failed item reward preview " + rewardId));
             reward.set("items.item_list", Map.of());
         }
         return reward;
+    }
+
+    private Map<String, Object> fallbackPreviewIcon(String material, String context) {
+        return vanillaItem("{id:\"minecraft:" + material + "\",count:1}", LEGACY_ITEM_DATA_VERSION, context);
+    }
+
+    private Map<String, Object> firstSafeAdaptedItem(Object rawItems) {
+        Map<?, ?> items = rawItems instanceof ConfigurationSection section ? section.getValues(false)
+            : rawItems instanceof Map<?, ?> map ? map : null;
+        if (items == null) return null;
+        for (Object rawItem : items.values()) {
+            if (!isSafeAdaptedItem(rawItem)) continue;
+            if (rawItem instanceof ConfigurationSection section) return normalizeMap(section.getValues(false));
+            if (rawItem instanceof Map<?, ?> map) return normalizeMap(map);
+        }
+        return null;
     }
 
     private static boolean isSafeAdaptedItem(Object raw) {
@@ -2002,8 +2039,15 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
         convertRewardLimits(old, result);
 
         if ("COMMAND".equalsIgnoreCase(type)) {
-            if (icon != null) setAdaptedItem(result, "preview.icon", icon, "reward preview " + crateId + "/" + rewardId);
-            result.set("preview.use_item_data", old.getBoolean("Custom_Preview", false));
+            Map<String, Object> previewIcon = icon == null ? null
+                : convertPreviewIcon(icon, "command reward preview " + crateId + "/" + rewardId);
+            boolean useIconData = previewIcon != null && old.getBoolean("Custom_Preview", false);
+            if (previewIcon == null) {
+                String fallback = icon != null && !this.manualForceMode ? "barrier" : "command_block";
+                previewIcon = fallbackPreviewIcon(fallback, "command reward preview " + crateId + "/" + rewardId);
+            }
+            result.set("preview.icon", previewIcon);
+            result.set("preview.use_icon_data", useIconData);
             List<String> commands = rewriteCommands(old.getStringList("Commands"), "reward " + crateId + "/" + rewardId);
             result.set("commands.enabled", true);
             result.set("commands.iterations", 1);
@@ -2018,16 +2062,28 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
             Map<String, Object> rewardItems = convertItemList(old, crateId, rewardId);
             result.set("items.item_list", rewardItems);
             boolean customPreview = old.getBoolean("Custom_Preview", false);
-            if (!this.manualForceMode && !customPreview && !rewardItems.isEmpty()) {
-                Map<?, ?> firstItem = (Map<?, ?>) rewardItems.values().iterator().next();
-                result.set("preview.icon", normalizeMap(firstItem));
-                result.set("preview.use_item_data", true);
-                this.rewardPreviewIconsFromItems++;
+            Map<String, Object> previewIcon = null;
+            boolean useIconData = false;
+            if (!this.manualForceMode && icon != null && (customPreview || rewardItems.isEmpty())) {
+                previewIcon = convertPreviewIcon(icon, "reward preview " + crateId + "/" + rewardId);
+                useIconData = previewIcon != null && customPreview;
             }
-            else if (!this.manualForceMode) {
-                if (icon != null) setAdaptedItem(result, "preview.icon", icon, "reward preview " + crateId + "/" + rewardId);
-                result.set("preview.use_item_data", customPreview);
+            if (previewIcon == null && !rewardItems.isEmpty()) {
+                Object firstItem = rewardItems.values().iterator().next();
+                if (firstItem instanceof Map<?, ?> map) {
+                    previewIcon = normalizeMap(map);
+                    useIconData = true;
+                    this.rewardPreviewIconsFromItems++;
+                }
             }
+            if (previewIcon == null) {
+                previewIcon = fallbackPreviewIcon("barrier", "failed item reward preview " + crateId + "/" + rewardId);
+                useIconData = false;
+                this.failures.add("Reward '" + crateId + "/" + rewardId
+                    + "' has no successfully converted preview or given item; its preview icon was set to a barrier.");
+            }
+            result.set("preview.icon", previewIcon);
+            result.set("preview.use_icon_data", useIconData);
             if (old.getBoolean("Placeholder_Apply", false)) {
                 this.warnings.add("Reward '" + crateId + "/" + rewardId + "' used item placeholders; review its v7 item reward after conversion.");
             }
@@ -2038,6 +2094,20 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
             }
         }
         return result;
+    }
+
+    private Map<String, Object> convertPreviewIcon(Object raw, String context) {
+        try {
+            Map<String, Object> converted = convertAdaptedItem(raw, context);
+            if (converted == null) {
+                this.failures.add(context + " could not be converted from the legacy item format.");
+            }
+            return converted;
+        }
+        catch (Exception exception) {
+            this.failures.add(context + " conversion failed: " + concise(exception));
+            return null;
+        }
     }
 
     private Map<String, Object> convertItemList(YamlConfiguration old, String crateId, String rewardId) {
@@ -2075,12 +2145,14 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
                 }
                 catch (Exception exception) {
                     this.rewardItemsFailed++;
-                    this.warnings.add("Reward '" + crateId + "/" + rewardId + "' legacy item " + index + " could not be decoded and was skipped: " + concise(exception) + ". See the backup.");
+                    this.failures.add("Reward '" + crateId + "/" + rewardId + "' legacy item " + index
+                        + " could not be decoded and was skipped: " + concise(exception) + ". See the backup.");
                 }
             }
         }
         if (itemDataEntries == 0 && oldEncodedItems.isEmpty()) {
-            this.warnings.add("Reward '" + crateId + "/" + rewardId + "' has no readable legacy ItemsData or Items entries; its v7 item list is empty. See the backup.");
+            this.failures.add("Reward '" + crateId + "/" + rewardId
+                + "' has no readable legacy ItemsData or Items entries; its v7 item list is empty. See the backup.");
         }
         return items;
     }
@@ -2091,7 +2163,8 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
         Map<String, Object> converted = convertAdaptedItem(item, context);
         if (converted == null) {
             this.rewardItemsFailed++;
-            this.warnings.add("Reward '" + crateId + "/" + rewardId + "' item '" + itemId + "' has an unsupported legacy item format and was skipped. See the backup.");
+            this.failures.add("Reward '" + crateId + "/" + rewardId + "' item '" + itemId
+                + "' has an unsupported legacy item format and was skipped. See the backup.");
             return;
         }
         String key = UUID.nameUUIDFromBytes((crateId + "/" + rewardId + "/" + itemId).getBytes(StandardCharsets.UTF_8)).toString();
@@ -3261,4 +3334,3 @@ public final class ExcellentCratesV6Converter extends JavaPlugin {
         private int unclaimedAmount;
     }
 }
-
